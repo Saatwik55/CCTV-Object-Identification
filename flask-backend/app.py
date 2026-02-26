@@ -9,6 +9,7 @@ CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024 * 1024
 UPLOAD_FOLDER = 'input'
 OUTPUT_FOLDER = 'output'
+FPS = 0
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -34,9 +35,10 @@ def process():
         img.save(os.path.join(ref_dir, f"ref_{i}.jpg"))
 
     def generate_logs():
+        global FPS
         yield "[INFO] Extracting frames from video...\n"
-        fps = main.generate_frames(video_path)
-        main.initialize(target, fps)
+        FPS = main.generate_frames(video_path)
+        main.initialize(target, FPS)
         yield "[INFO] Running YOLO on reference frames...\n"
         main.process_reference_images()
         yield "[INFO] Running YOLO on extracted frames...\n"
@@ -69,7 +71,7 @@ def get_output_images():
         if os.path.isfile(os.path.join(OUTPUT_FOLDER, f)) and f.lower().endswith(('.png', '.jpg', '.jpeg'))
     ])
 
-    return jsonify(files)
+    return jsonify({"files": files, "fps": FPS})
 
 
 @app.route('/output/<filename>')

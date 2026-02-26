@@ -1,5 +1,19 @@
 import React, { useState } from "react";
 
+
+const extractFrameNumber = (filename) => {
+  const match = filename.match(/frame_(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+};
+
+const secondsToHMS = (seconds) => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return [h, m, s].map(v => String(v).padStart(2, "0")).join(":");
+};
+
+
 function App() {
   const [video, setVideo] = useState(null);
   const [referenceImages, setReferenceImages] = useState([]);
@@ -7,6 +21,7 @@ function App() {
   const [logOutput, setLogOutput] = useState("");
   const [loading, setLoading] = useState(false);
   const [outputImages, setOutputImages] = useState([]);
+  const [imageMeta, setImageMeta] = useState({});
 
   const handleSubmit = async () => {
     if (!video || referenceImages.length === 0) {
@@ -16,7 +31,8 @@ function App() {
 
     setLoading(true);
     setLogOutput("");
-    setOutputImages([]); // Clear previous images
+    setOutputImages([]);
+    setImageMeta({});
 
     const formData = new FormData();
     formData.append("video", video);
@@ -39,21 +55,56 @@ function App() {
       setLogOutput((prev) => prev + decoder.decode(value));
     }
 
-    // Fetch output images after processing
     const imageRes = await fetch("http://localhost:5000/results");
-    const imageList = await imageRes.json();
-    setOutputImages(imageList);
+    const { files, fps } = await imageRes.json();
 
+    setOutputImages(files);
+
+    const meta = {};
+    files.forEach((file) => {
+      const frameNum = extractFrameNumber(file);
+      if (frameNum !== null && fps > 0) {
+        const seconds = frameNum / fps;
+        meta[file] = secondsToHMS(seconds);
+      }
+    });
+
+    setImageMeta(meta);
     setLoading(false);
   };
+  const loadExistingResults = async () => {
+    setLoading(true);
+    setLogOutput("Loaded existing results from backend.\n");
+    setOutputImages([]);
+    setImageMeta({});
 
+    const res = await fetch("http://localhost:5000/results");
+    const { files, fps } = await res.json();
+
+    setOutputImages(files);
+
+    const meta = {};
+    files.forEach((file) => {
+      const frameNum = extractFrameNumber(file);
+      if (frameNum !== null && fps > 0) {
+        meta[file] = secondsToHMS(frameNum / fps);
+      }
+    });
+
+    setImageMeta(meta);
+    setLoading(false);
+  };
   return (
     <div style={styles.container}>
-      <h2 style={styles.heading}>Smart Object Matching Tool</h2>
+      <h2 style={styles.heading}>Object detection in video</h2>
 
       <div style={styles.formGroup}>
         <label>Upload Video:</label>
-        <input type="file" accept="video/*" onChange={(e) => setVideo(e.target.files[0])} />
+        <input
+          type="file"
+          accept="video/*"
+          onChange={(e) => setVideo(e.target.files[0])}
+        />
       </div>
 
       <div style={styles.formGroup}>
@@ -90,12 +141,23 @@ function App() {
                 alt={`match ${idx}`}
                 style={styles.image}
               />
+              <div style={{ fontSize: "0.8rem", marginTop: "4px", color: "#555" }}>
+                ⏱ {imageMeta[img] ?? "N/A"}
+              </div>
               <p style={styles.caption}>{img}</p>
             </div>
           ))}
         </div>
       )}
+      <button
+        onClick={loadExistingResults}
+        disabled={loading}
+        style={{ ...styles.button, backgroundColor: "#28a745", marginLeft: "1rem" }}
+      >
+        Load Existing Results
+      </button>
     </div>
+
   );
 }
 
