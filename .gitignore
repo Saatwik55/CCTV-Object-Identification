@@ -1,0 +1,11 @@
+# Byte-compiled / optimized / DLL files
+frames/
+candidates/
+output/
+reference_crops/
+reference/
+input/
+*.pyc
+*.py[cod]
+*$py.class
+/workspace

@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 
-
 const extractFrameNumber = (filename) => {
   const match = filename.match(/frame_(\d+)/);
   return match ? parseInt(match[1], 10) : null;
@@ -12,7 +11,6 @@ const secondsToHMS = (seconds) => {
   const s = Math.floor(seconds % 60);
   return [h, m, s].map(v => String(v).padStart(2, "0")).join(":");
 };
-
 
 function App() {
   const [video, setVideo] = useState(null);
@@ -72,6 +70,7 @@ function App() {
     setImageMeta(meta);
     setLoading(false);
   };
+
   const loadExistingResults = async () => {
     setLoading(true);
     setLogOutput("Loaded existing results from backend.\n");
@@ -94,6 +93,7 @@ function App() {
     setImageMeta(meta);
     setLoading(false);
   };
+
   return (
     <div style={styles.container}>
       <h2 style={styles.heading}>Object detection in video</h2>
@@ -134,30 +134,42 @@ function App() {
 
       {outputImages.length > 0 && (
         <div style={styles.imageGrid}>
-          {outputImages.map((img, idx) => (
-            <div key={idx} style={styles.imageCard}>
-              <img
-                src={`http://localhost:5000/output/${img}`}
-                alt={`match ${idx}`}
-                style={styles.image}
-              />
-              <div style={{ fontSize: "0.8rem", marginTop: "4px", color: "#555" }}>
-                ⏱ {imageMeta[img] ?? "N/A"}
+          {outputImages.map((img, idx) => {
+            // Detect if the result came from the FaceNet engine
+            const isFaceMatch = img.startsWith("face_");
+            
+            return (
+              <div key={idx} style={{
+                ...styles.imageCard,
+                border: isFaceMatch ? "2px solid #007bff" : "1px solid #ddd",
+                position: "relative"
+              }}>
+                {isFaceMatch && (
+                  <div style={styles.faceBadge}>👤 Verified Face</div>
+                )}
+                <img
+                  src={`http://localhost:5000/output/${img}`}
+                  alt={`match ${idx}`}
+                  style={styles.image}
+                />
+                <div style={{ fontSize: "0.8rem", marginTop: "4px", color: "#555", fontWeight: "bold" }}>
+                  ⏱ {imageMeta[img] ?? "N/A"}
+                </div>
+                <p style={styles.caption}>{img}</p>
               </div>
-              <p style={styles.caption}>{img}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
+
       <button
         onClick={loadExistingResults}
         disabled={loading}
-        style={{ ...styles.button, backgroundColor: "#28a745", marginLeft: "1rem" }}
+        style={{ ...styles.button, backgroundColor: "#28a745", marginTop: "2rem" }}
       >
         Load Existing Results
       </button>
     </div>
-
   );
 }
 
@@ -216,10 +228,22 @@ const styles = {
     borderRadius: "4px",
   },
   caption: {
-    fontSize: "0.85rem",
+    fontSize: "0.75rem",
     marginTop: "0.5rem",
-    color: "#333",
+    color: "#777",
+    wordBreak: "break-all"
   },
+  faceBadge: {
+    position: "absolute",
+    top: "5px",
+    right: "5px",
+    backgroundColor: "#007bff",
+    color: "white",
+    fontSize: "0.65rem",
+    padding: "2px 6px",
+    borderRadius: "10px",
+    zIndex: 1,
+  }
 };
 
 export default App;

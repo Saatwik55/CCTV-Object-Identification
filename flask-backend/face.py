@@ -1,72 +1,136 @@
 import torch
-import numpy as np
-from PIL import Image, UnidentifiedImageError
-from facenet_pytorch import InceptionResnetV1, MTCNN
+from torch.utils.data import Dataset, DataLoader
 from torch.nn.functional import normalize
-from torch.nn import CosineSimilarity
+from PIL import Image
+from facenet_pytorch import InceptionResnetV1, MTCNN
+import os
 
-# Set device
+# -----------------------------
+# 1. Hardware & Model Setup
+# -----------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"[INFO] Using device: {device}")
 
-# Initialize face detector and embedder
-mtcnn = MTCNN(image_size=160, margin=0, min_face_size=20, device=device)
+# MTCNN for face detection/alignment
+mtcnn = MTCNN(
+    image_size=160, 
+    margin=20, 
+    keep_all=False, 
+    device=device, 
+    post_process=True
+)
+
+# InceptionResnetV1 for generating 512-D embeddings
 model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
-def detect_face(image_path):
-    """
-    Detects a face in the given image using MTCNN.
-    Returns aligned face tensor if successful, else None.
-    """
-    try:
-        img = Image.open(image_path).convert("RGB")
-    except UnidentifiedImageError:
-        print(f"[ERROR] Cannot open image: '{image_path}' (Unidentified or corrupt)")
-        return None
-    except Exception as e:
-        print(f"[ERROR] Failed to load image '{image_path}': {e}")
-        return None
+# Global cache to prevent redundant processing
+FACE_EMB_CACHE = {}
 
-    try:
-        face = mtcnn(img)
-        if face is None:
-            print(f"[WARN] No face detected in '{image_path}'")
-        return face
-    except Exception as e:
-        print(f"[ERROR] Face detection failed for '{image_path}': {e}")
-        return None
+# -----------------------------
+# 2. Dataset & Collate 
+# -----------------------------
+class FaceImageDataset(Dataset):
+    def __init__(self, image_paths):
+        self.image_paths = image_paths
 
-def embed_face(image_path):
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        path = self.image_paths[idx]
+        try:
+            # Load as RGB; MTCNN handles the resizing internally
+            img = Image.open(path).convert("RGB")
+            return img, path
+        except Exception as e:
+            print(f"[ERROR] Could not load {path}: {e}")
+            return None, path
+
+def pil_collate_fn(batch):
     """
-    Extracts the face embedding from the image.
-    Returns normalized 512-dim embedding if face is found, else None.
+    Groups PIL images and paths into lists. 
+    Required because input images often have different dimensions.
     """
-    face_tensor = detect_face(image_path)
-    if face_tensor is None:
-        return None
+    imgs = [item[0] for item in batch if item[0] is not None]
+    paths = [item[1] for item in batch if item[0] is not None]
+    return imgs, paths
 
-    try:
-        with torch.no_grad():
-            face_tensor = face_tensor.unsqueeze(0).to(device)  # Shape: [1, 3, 160, 160]
-            embedding = model(face_tensor)
-            return normalize(embedding, dim=-1)  # Shape: [1, 512]
-    except Exception as e:
-        print(f"[ERROR] Embedding failed for '{image_path}': {e}")
-        return None
-
-def compare_images(img1_path, img2_path):
+# -----------------------------
+# 3. Batch Processing Engine
+# -----------------------------
+def batch_load_and_embed(image_paths, batch_size=32, num_workers=4):
     """
-    Compares two face images using cosine similarity between embeddings.
+    Processes a list of image paths. 
+    Handles variable image sizes during detection and batches during embedding.
     """
-    emb1 = embed_face(img1_path)
-    emb2 = embed_face(img2_path)
+    uncached_paths = [p for p in image_paths if p not in FACE_EMB_CACHE]
 
-    if emb1 is None or emb2 is None:
-        print("[WARN] Face not detected in one or both images.")
-        return
+    if uncached_paths:
+        dataset = FaceImageDataset(uncached_paths)
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=False, 
+            collate_fn=pil_collate_fn
+        )
 
-    try:
-        cos = CosineSimilarity(dim=1)
-        sim_score = cos(emb1, emb2).item()
-        print(f"Cosine similarity between '{img1_path}' and '{img2_path}': {sim_score:.4f}", flush=True)
-    except Exception as e:
-        print(f"[ERROR] Similarity computation failed: {e}")
+        for imgs, paths in loader:
+            if not imgs:
+                continue
+
+            # STEP A: Individual Detection (The Fix)
+            # We process images individually to avoid "equal-dimension" errors.
+            # MTCNN will output uniform 160x160 tensors.
+            try:
+                faces = [mtcnn(img) for img in imgs]
+            except Exception as e:
+                print(f"[WARN] MTCNN processing failed for a batch: {e}")
+                continue
+
+            # STEP B: Filter & Stack
+            valid_faces = []
+            valid_paths = []
+            for face, path in zip(faces, paths):
+                if face is not None:
+                    valid_faces.append(face)
+                    valid_paths.append(path)
+
+            if not valid_faces:
+                continue
+
+            # STEP C: Batched Embedding (The Speedup)
+            # Since all faces are now 160x160, we can stack them safely.
+            face_tensors = torch.stack(valid_faces).to(device)
+            
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                # Generate embeddings for the whole batch at once
+                embeddings = model(face_tensors)
+                embeddings = normalize(embeddings, dim=-1).cpu()
+
+            # STEP D: Update Cache
+            for p, e in zip(valid_paths, embeddings):
+                FACE_EMB_CACHE[p] = e.unsqueeze(0)
+
+    return {
+        p: FACE_EMB_CACHE[p] 
+        for p in image_paths 
+        if p in FACE_EMB_CACHE
+    }
+
+# -----------------------------
+# 4. Example Usage
+# -----------------------------
+if __name__ == "__main__":
+    # Replace with your actual image paths
+    test_paths = ["path/to/face1.jpg", "path/to/face2.png"] 
+    
+    # Filter for existing files only
+    test_paths = [p for p in test_paths if os.path.exists(p)]
+    
+    if test_paths:
+        results = batch_load_and_embed(test_paths)
+        print(f"[INFO] Successfully embedded {len(results)} images.")
+    else:
+        print("[INFO] No valid image paths provided for testing.")
