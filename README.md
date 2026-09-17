@@ -1,7 +1,7 @@
 <div align="center">
 
 # CCTV-Object-Identification
-
+</div>
 ## The Strategic "Why"
 
 > The manual process of tracking objects across multiple CCTV feeds is an incredibly time-consuming, error-prone, and resource-intensive task for security personnel. In critical situations, the delay in identifying and locating specific individuals or items can have severe consequences, leading to operational inefficiencies, increased security risks, and missed opportunities for rapid intervention. Traditional video analysis often lacks the precision and automation required to effectively manage vast amounts of visual data, leaving organizations vulnerable.
